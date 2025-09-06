@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+httpx
+slack_sdk
+pydantic
+sqlalchemy
+openai
+aiohttp
+requests
+python-dotenv
+PyYAML
+python-multipart
