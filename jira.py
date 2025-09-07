@@ -9,10 +9,12 @@ load_dotenv()
 with open(os.path.join(os.path.dirname(__file__), "config.yml"), "r") as f:
     config = yaml.safe_load(f)
 
+# Read sensitive values from environment variables to avoid committing them to source control.
 JIRA_BASE_URL = config["JIRA_BASE_URL"]
-JIRA_EMAIL = config["JIRA_EMAIL"]
+# Prefer the environment variable JIRA_EMAIL; fall back to config.yml for backward compatibility.
+JIRA_EMAIL = os.getenv("JIRA_EMAIL")
 JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")
-JIRA_PROJECT_KEY = config.get("JIRA_PROJECT_KEY", "YOURPROJECT")  # Add this to config.yml
+JIRA_PROJECT_KEY = config.get("JIRA_PROJECT_KEY", "YOURPROJECT")  
 
 def get_jira_auth_header():
     auth_str = f"{JIRA_EMAIL}:{JIRA_API_TOKEN}"
