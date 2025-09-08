@@ -2,7 +2,7 @@ import requests
 from fastapi import FastAPI, Request, Form, Body
 from db import init_db, SessionLocal
 from llm import classify_ticket
-from jira import create_jira_issue, get_jira_status
+from jira import create_jira_issue, get_jira_status, JIRA_PROJECT_KEY
 from slack import send_message, build_approval_block
 from models import TicketLog
 import uvicorn
@@ -26,13 +26,30 @@ async def slack_command(request: Request):
 
     if command == "/ticket":
         print(f"Sending to channel_id: {channel_id}")  # Debug log
-        # category = classify_ticket(text)
-        category = "Task"  # Default category changed back to Task
+        # Run LLM classification (async). Fall back to "Task" on error or empty text.
+        try:
+            category = await classify_ticket(text) if text else "Task"
+        except Exception as e:
+            print("LLM classification failed:", e)
+            category = "Task"
+
+        # Map LLM label to Jira issue type name in your project
+        label_to_issue_type = {
+            "Task": "Task",
+            "Bug": "Bug",
+            "Incident": "Incident",
+            "Feature Request": "Task",  # map feature requests to Task by default
+            "Question": "Question",
+            # you can add other mappings here
+        }
+        issue_type_name = label_to_issue_type.get(category, "Task")
+
+        # Use configured project key from jira.py (JIRA_PROJECT_KEY)
         jira_key = await create_jira_issue(
             summary=text,
             description=text,
-            project_id="10000",  # From your manual Jira payload
-            issue_type_id="10001"  # From your manual Jira payload
+            project_id=JIRA_PROJECT_KEY,
+            issue_type_id=issue_type_name,
         )
         if jira_key:
             log = TicketLog(

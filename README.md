@@ -128,17 +128,66 @@ The app writes a `TicketLog` entry whenever a ticket is successfully created.
 - Invalid blocks in Slack: `slack.py` logs block payloads and types. Use these logs to debug malformed block structures.
 - If Jira returns HTML or non-JSON on error `jira.py` will print raw response bytes to help debugging.
 
-## Development notes & recommended changes
-
-- Make `project_id` / `issue_type_id` configurable (via `config.yml` or `.env`) rather than hard-coded values in `main.py`.
-- Consider switching to `project.key` in payloads to avoid having to discover numeric project IDs.
-- Add unit tests for `jira.py` and `slack.py` helpers. Use mocking for network calls (e.g., `respx` or `pytest-httpx`).
-- Add validation and error handling around Slack form parsing in `main.py` (guard against missing fields).
-
 ## Quick checklist to adapt or reconfigure the project
 
 1. Update `config.yml` with your `JIRA_BASE_URL` and `JIRA_EMAIL`.
 2. Set environment variables in `.env` (`JIRA_API_TOKEN`, `SLACK_BOT_TOKEN`, optional `OPENAI_API_KEY`).
 3. Ensure the Slack app has the correct request url set to your ngrok/public URL.
 4. Start the app(FastAPI) with `uvicorn main:app` and test `/ticket` and `/ticket_status` from Slack.
+
+## Using a free local ggml model (offline LLM)
+
+The repository now includes an `llm.py` classifier that will try a local ggml/GGUF model first (via `llama-cpp-python`) and fall back to OpenAI chat completions if no local model is available. The LLM output is normalized to one of five labels: Task, Bug, Incident, Feature Request, Question.
+
+What is implemented
+- `GGML_MODEL_PATH` in your `.env` points to a local model file (ggml/.bin or .gguf). If present, `llm.classify_ticket` runs the local model (non-blocking via a background thread) and extracts a single label.
+- If no local model is found or loading fails, `llm.py` falls back to OpenAI (if `OPENAI_API_KEY` is set).
+- The classifier enforces the allowed labels in code (post-processing). Any unexpected reply is normalized or falls back to `Task`.
+- `main.py` maps the LLM label to a Jira Issue Type name (configured mapping) and uses `JIRA_PROJECT_KEY` when creating issues.
+
+Quick setup
+
+1. Install llama-cpp-python
+
+2. Place a local ggml/GGUF model in `models/` (example names: `orca-mini-3b-gguf2-q4_0.gguf`).
+
+3. Set `GGML_MODEL_PATH` in your `.env` (use an absolute or project-relative path):
+
+```properties
+GGML_MODEL_PATH=./models/orca-mini-3b-gguf2-q4_0.gguf
+OPENAI_API_KEY=your-openai-key  # optional fallback
+```
+
+How labels are enforced
+- The classifier prompt instructs the model to return ONLY one of the five labels. The code then normalizes the first line of the reply and matches it (exact/prefix/contains) against the allowed list. If nothing matches, it falls back to `Task` and logs the raw reply for inspection.
+
+Mapping labels to Jira Issue Types
+- `main.py` contains a `label_to_issue_type` mapping that translates classifier labels into the Jira Issue Type name used when creating an issue. Make sure the names match exactly the Issue Type names in your project (case-sensitive). Example mapping in `main.py`:
+
+```python
+label_to_issue_type = {
+  "Task": "Task",
+  "Bug": "Bug",
+  "Incident": "Incident",
+  "Feature Request": "Task",
+  "Question": "Question",
+}
+```
+
+Testing
+- Start the FastAPI app and invoke the Slack `/ticket` command (wired to your instance) to exercise the full flow. The created Jira issue will include the LLM-determined issue type.
+- Or run a quick Python snippet to call the classifier directly:
+
+```python
+from llm import classify_ticket
+import asyncio
+
+print(asyncio.run(classify_ticket('My app crashes on startup when saving.')))
+```
+
+Notes & tips
+- Model formats: `llama-cpp-python` supports GGUF/ggml formats. Verify the model file is a binary (not an HTML download page). Use `file` and `ls -lh` to check.
+- Licensing: check the model license before use (some models require acceptance on Hugging Face).
+- Hardware: quantized 7B models run on many laptops but still need several GB of RAM; larger models require more resources.
+- If you prefer a different local runtime (for example `gpt4all`), the code can be adapted.
 
