@@ -10,3 +10,4 @@ requests
 python-dotenv
 PyYAML
 python-multipart
+llama-cpp-python

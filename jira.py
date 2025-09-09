@@ -9,10 +9,12 @@ load_dotenv()
 with open(os.path.join(os.path.dirname(__file__), "config.yml"), "r") as f:
     config = yaml.safe_load(f)
 
+# Read sensitive values from environment variables to avoid committing them to source control.
 JIRA_BASE_URL = config["JIRA_BASE_URL"]
-JIRA_EMAIL = config["JIRA_EMAIL"]
+# Prefer the environment variable JIRA_EMAIL; fall back to config.yml for backward compatibility.
+JIRA_EMAIL = os.getenv("JIRA_EMAIL")
 JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")
-JIRA_PROJECT_KEY = config.get("JIRA_PROJECT_KEY", "YOURPROJECT")  # Add this to config.yml
+JIRA_PROJECT_KEY = config.get("JIRA_PROJECT_KEY", "10000")  
 
 def get_jira_auth_header():
     auth_str = f"{JIRA_EMAIL}:{JIRA_API_TOKEN}"
@@ -37,9 +39,15 @@ def build_jira_payload(summary, description, project_id, issue_type_id, reporter
         ]
     }
 
+    # project_id may be a numeric id or a project key; support both
+    project_field = {"id": project_id} if str(project_id).isdigit() else {"key": project_id}
+
+    # issue_type_id may be numeric id or issue type name; support both
+    issuetype_field = {"id": issue_type_id} if str(issue_type_id).isdigit() else {"name": issue_type_id}
+
     fields = {
-        "project": {"id": project_id},
-        "issuetype": {"id": issue_type_id},
+        "project": project_field,
+        "issuetype": issuetype_field,
         "summary": summary,
         "description": adf_description,
         "labels": []

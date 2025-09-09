@@ -9,6 +9,9 @@ __pycache__/
 venv/
 ENV/
 
+# Ignore GGUF model files
+*.gguf
+
 # SQLite
 *.db
 *.sqlite3
