@@ -8,6 +8,7 @@ __pycache__/
 .venv/
 venv/
 ENV/
+
 # Ignore GGUF model files
 *.gguf
 

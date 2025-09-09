@@ -8,6 +8,8 @@ This project listens for Slack slash commands and interactive button actions, cr
 - Query Jira issue status (`/ticket_status`).
 - Present approval/rejection interactive buttons in Slack and record the result.
 
+![Slack approval example](images/slack.png)
+
 The service is intentionally small and easy to adapt. It is implemented with FastAPI and uses `httpx` for async HTTP to Jira and `slack_sdk` AsyncWebClient for Slack.
 
 ## Architecture & important files
@@ -15,7 +17,7 @@ The service is intentionally small and easy to adapt. It is implemented with Fas
 - `main.py` — FastAPI application, Slack endpoints (`/slack/command`, `/slack/actions`, `/slack/events`).
 - `jira.py` — Jira API helpers for creating issues and fetching issue status.
 - `slack.py` — Slack helper to post messages and construct the approval block.
-- `llm.py` — (optional) uses OpenAI to classify tickets; currently code uses a placeholder.
+- `llm.py` — ticket classifier: tries a local ggml/GGUF model first (via `llama-cpp-python`) and falls back to OpenAI chat completions if no local model is available; normalizes output to one of the labels: Task, Bug, Incident, Feature Request, Question.
 - `db.py` — SQLAlchemy engine/session factory and `init_db()` function.
 - `models.py` — SQLAlchemy ORM model `TicketLog`.
 - `config.yml` — YAML config file with Jira base URL, email, project key.
@@ -130,7 +132,7 @@ The app writes a `TicketLog` entry whenever a ticket is successfully created.
 
 ## Quick checklist to adapt or reconfigure the project
 
-1. Update `config.yml` with your `JIRA_BASE_URL` and `JIRA_EMAIL`.
+1. Update `config.yml` with your `JIRA_BASE_URL` and `JIRA_PROJECT_KEY`.
 2. Set environment variables in `.env` (`JIRA_API_TOKEN`, `SLACK_BOT_TOKEN`, optional `OPENAI_API_KEY`).
 3. Ensure the Slack app has the correct request url set to your ngrok/public URL.
 4. Start the app(FastAPI) with `uvicorn main:app` and test `/ticket` and `/ticket_status` from Slack.
