@@ -6,6 +6,7 @@ from jira import create_jira_issue, get_jira_status, JIRA_PROJECT_KEY
 from slack import send_message, build_approval_block
 from models import TicketLog
 import uvicorn
+import asyncio
 import yaml
 import json
 import os
@@ -21,66 +22,85 @@ async def slack_command(request: Request):
     text = form.get("text")
     user_id = form.get("user_id")
     channel_id = form.get("channel_id")
+    # Slack provides a response_url for delayed responses if needed
+    response_url = form.get("response_url")
 
     db = SessionLocal()
 
     if command == "/ticket":
-        print(f"Sending to channel_id: {channel_id}")  # Debug log
-        # Run LLM classification (async). Fall back to "Task" on error or empty text.
-        try:
-            category = await classify_ticket(text) if text else "Task"
-        except Exception as e:
-            print("LLM classification failed:", e)
-            category = "Task"
+        # Acknowledge immediately to Slack to avoid operation_timeout.
+        # Do the heavy work (LLM classification, Jira creation, posting messages) in a background task.
+        print(f"Received /ticket from user {user_id} in channel {channel_id}; scheduling background job")
 
-        # Map LLM label to Jira issue type name in your project
-        label_to_issue_type = {
-            "Task": "Task",
-            "Bug": "Bug",
-            "Incident": "Incident",
-            "Feature Request": "Task",  # map feature requests to Task by default
-            "Question": "Question",
-            # you can add other mappings here
-        }
-        issue_type_name = label_to_issue_type.get(category, "Task")
+        async def _background_handle_ticket(text, user_id, channel_id, response_url):
+            db_bg = SessionLocal()
+            try:
+                # Run LLM classification (async). Fall back to "Task" on error or empty text.
+                try:
+                    category = await classify_ticket(text) if text else "Task"
+                except Exception as e:
+                    print("LLM classification failed:", e)
+                    category = "Task"
 
-        # Use configured project key from jira.py (JIRA_PROJECT_KEY)
-        jira_key = await create_jira_issue(
-            summary=text,
-            description=text,
-            project_id=JIRA_PROJECT_KEY,
-            issue_type_id=issue_type_name,
-        )
-        if jira_key:
-            log = TicketLog(
-                slack_user=user_id,
-                slack_channel=channel_id,
-                ticket_id=jira_key,
-                jira_issue_key=jira_key,
-                llm_result=category,
-                status="created"
-            )
-            db.add(log)
-            db.commit()
-            await send_message(channel_id, f"Ticket has been created: {jira_key}", blocks=build_approval_block(jira_key), fallback_user=user_id)
-            db.close()
-            return {"text": f"Ticket has been created: {jira_key}"}
-        else:
-            print("Jira ticket creation failed. Check logs for details.")
-            await send_message(channel_id, "Failed to create Jira ticket. Please check server logs.", fallback_user=user_id)
-            db.close()
-            return {"text": "Failed to create Jira ticket. Please check server logs."}
+                # Map LLM label to Jira issue type name in your project
+                label_to_issue_type = {
+                    "Task": "Task",
+                    "Bug": "Bug",
+                    "Incident": "Incident",
+                    "Feature Request": "Task",
+                    "Question": "Question",
+                }
+                issue_type_name = label_to_issue_type.get(category, "Task")
+
+                # Use configured project key from jira.py (JIRA_PROJECT_KEY)
+                jira_key = await create_jira_issue(
+                    summary=text,
+                    description=text,
+                    project_id=JIRA_PROJECT_KEY,
+                    issue_type_id=issue_type_name,
+                )
+                if jira_key:
+                    log = TicketLog(
+                        slack_user=user_id,
+                        slack_channel=channel_id,
+                        ticket_id=jira_key,
+                        jira_issue_key=jira_key,
+                        llm_result=category,
+                        status="created"
+                    )
+                    db_bg.add(log)
+                    db_bg.commit()
+                    # Post the approval block to the channel
+                    try:
+                        await send_message(channel_id, f"Ticket has been created: {jira_key}", blocks=build_approval_block(jira_key), fallback_user=user_id)
+                    except Exception as e:
+                        print("Failed to send Slack message after creating Jira ticket:", e)
+                else:
+                    print("Jira ticket creation failed. Check logs for details.")
+                    try:
+                        await send_message(channel_id, "Failed to create Jira ticket. Please check server logs.", fallback_user=user_id)
+                    except Exception as e:
+                        print("Failed to send failure message to Slack:", e)
+            finally:
+                db_bg.close()
+
+        # schedule background work and immediately ack Slack
+        asyncio.create_task(_background_handle_ticket(text, user_id, channel_id, response_url))
+        # Close the short-lived request DB session and return an ephemeral acknowledgement
+        db.close()
+        return {"response_type": "ephemeral", "text": "Processing your ticket — I will post an update in the channel when ready."}
 
     elif command == "/ticket_status":
-        jira_key = text.strip()
+        jira_key = (text or "").strip()
         if not jira_key:
             db.close()
-            return {"text": "Please provide a ticket key, e.g. /ticket_status KAN-1"}
+            return {"response_type": "ephemeral", "text": "Please provide a ticket key, e.g. /ticket_status KAN-1"}
         status = await get_jira_status(jira_key)
-    await send_message(channel_id, f"Ticket {jira_key} Status: {status}", fallback_user=user_id)
-    db.close()
-    return {"text": f"Ticket {jira_key} Status: {status}"}
+        db.close()
+        # Return an ephemeral message so only the invoking user sees the status
+        return {"response_type": "ephemeral", "text": f"Ticket {jira_key} Status: {status}"}
 
+    # unknown command
     db.close()
     return {"text": "unknown command"}
 
