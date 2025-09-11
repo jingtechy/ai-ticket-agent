@@ -28,4 +28,7 @@ ENV/
 # Jupyter
 .ipynb_checkpoints/
 
+#SQL
+*.sql
+
 
